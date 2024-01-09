@@ -108,11 +108,44 @@ fun sum_up {n, m: nat | m <= n} (A: &(@[int][n]), num_elts: int m): int =
         loop (A, 0, num_elts, 0)
 end
 
+extern fun {a: t@ype} init_one (A: &(@[a?][1]) >> @[a][1], elt: a): void
+
+// This function replicates the functionality of memset. It takes a possibly
+// uninitialized array of size n and mutates it into an initialized array of 
+// size n. It uses array view splits to initialize one element at a time in 
+// sequence. It should optimize down to a tail-recursive function, because we 
+// only use proof-level functions after the tail-call (i.e. no actual work is 
+// done after calling 'loop')
+fun {a: t@ype} mem_init {n: pos} // Note I use "pos" here to avoid handling zero-sized arrays.
+    (A: &(@[a?][n]) >> @[a][n], size: int n, elt: a): void =
+    let
+        fun {a: t@ype} loop {n: pos} .<n>.
+            (A: &(@[a?][n]) >> @[a][n], size: int n, elt: a): void =
+            if size = 1 then init_one (A, elt)
+            else let
+                prval (pfA1, pfA2) = array_v_split{..}{..}{n}{1} (view@A)
+                val () = init_one (A, elt)
+                val pA2 = ptr_add<a> (addr@A, 1)
+                val (pfA2 | pA2) = viewptr_match (pfA2 | pA2)
+                val () = loop (!pA2, size - 1, elt)
+                prval () = view@(A) := array_v_unsplit (pfA1, pfA2)
+            in () end
+    in
+    loop (A, size, elt)
+end
+
+implement {a} init_one (A, elt) = () where {
+    var B = @[a](elt)
+    val () = array_copy<a>(A, B, i2sz(1)) // A hack because I haven't figured out how to
+                                          // get this to typecheck otherwise :P but it
+                                          // optimizes out anyway. 
+                                          // Yeah, I know, this is kinda cheating.
+}
 
 implement main0 () = () where {
-    val file = file_open ("output1.txt", "w")
+    // val file = file_open ("output1.txt", "w")
 
-    val _ = file_write ("Hello, World!", i2sz(1), i2sz(13), file)
+    // val _ = file_write ("Hello, World!", i2sz(1), i2sz(13), file)
 
     // val (pf | p) = raw_malloc (i2sz(10))
     // val (pf | res) = file_read (pf | p, i2sz(10), file)
@@ -120,7 +153,7 @@ implement main0 () = () where {
 
     // If we omit this line, type-checking fails. We must always
     // consume the linear variable "file".
-    val _ = file_close (file)
+    // val _ = file_close (file)
 
     var A = @[int](1, 2, 3, 4, 5)
     
@@ -129,11 +162,20 @@ implement main0 () = () where {
 
     // Sum of the first 4 numbers
     val sum_4 = sum_up (A, 4)
+
+    var B = @[int][5]()
+
+    val () = mem_init (B, 5, 10)
+
+    val sum_B = sum_up (B, 5) // equals 50
     
     // This would fail type checking:
     // val sum_6 = sum_up (A, 6)
 
     // Prints 15
-    val () = print (sum_5)
+    // val () = print (sum_5)
+
+    val () = println! ("sum 5: ", sum_5)
+    val () = println! ("sum 10: ", sum_B)
 }
 
