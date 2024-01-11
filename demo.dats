@@ -1,9 +1,8 @@
-#include "share/atspre_define.hats"
+// #include "share/atspre_define.hats"
 #include "share/atspre_staload.hats"
+#include
+"share/atspre_staload_libats_ML.hats"
 
-staload "libats/ML/SATS/basis.sats"
-staload "libats/ML/SATS/list0.sats"
-staload _(*anon*) = "libats/ML/DATS/list0.dats"
 staload UN = "prelude/SATS/unsafe.sats"
 
 // One cool thing about ATS is linear resource management.
@@ -16,24 +15,25 @@ typedef file_t = $extype"FILE*"
 // before falling out of scope, otherwise the compiler refuses compilation. 
 // It must only be consumed once, so it is appropriate for objects that you 
 // might otherwise manage using RAII in languages like C++ or Rust.
-datavtype File = file_t
+datavtype File = File_Ptr of (file_t)
 
 // Now let's construct some simple operations for opening, closing, 
 // reading, and writing files
 
 // fopen gives us a File. We assume for sake of simplicity that this operation
 // always works.
-extern fun file_open: (string, string) -> File = "mac#fopen"
+extern fun file_open_raw: (string, string) -> File = "mac#fopen"
 // fclose consumes the file and returns an int
-extern fun file_close: (File) -> int = "mac#fclose"
+extern fun file_close_raw: (File) -> int = "mac#fclose"
 // fwrite takes the file as a parameter but does not consume
 // it, as denoted by the exclamation mark
-extern fun file_write: (string, size_t, size_t, !File) -> size_t = "mac#fwrite"
+extern fun file_write_raw: (string, size_t, size_t, !File) -> size_t = "mac#fwrite"
 
 // A dummy function that's a simple wrapper over fread. More details below.
-extern fun file_read1 {m, n: nat | m <= n}{l: agz}
+extern fun file_read_raw {m, n: nat | m <= n}{l: agz}
            (b0ytes n @ l | ptr l, size_t 1, size_t m, !File): 
-           (b0ytes n @ l | size_t) = 
+           [o: nat | o <= m]
+           (b0ytes n @ l | size_t o) = 
            "mac#fread"
 
 // A relatively safe version of fread.
@@ -60,10 +60,10 @@ extern fun file_read1 {m, n: nat | m <= n}{l: agz}
 // 2. The buffer pointer passed to file_read cannot be null.
 // 3. file_read cannot cause a buffer overflow because the buffer passed must
 //    have enough bytes to hold all the read bytes.
-fun file_read {m, n: nat | m <= n}{l: agz}
+fun file_read1 {m, n: nat | m <= n}{l: agz}
     (pf: b0ytes n @ l | p: ptr l, sz: size_t m, f: !File): 
     (b0ytes n @ l | size_t) = 
-    file_read1 (pf | p, i2sz(1), sz, f)
+    file_read_raw (pf | p, i2sz(1), sz, f)
 
 // Simple wrappers over malloc and free with some basic safety properties.
 // (Note that the definition for malloc here is practical but not *exactly* safe: 
@@ -108,7 +108,10 @@ fun sum_up {n, m: nat | m <= n} (A: &(@[int][n]), num_elts: int m): int =
         loop (A, 0, num_elts, 0)
 end
 
-extern fun {a: t@ype} init_one (A: &(@[a?][1]) >> @[a][1], elt: a): void
+// We can forward-declare functions like this.
+// Also, "fun" means the function can recurse, whereas "fn" means the function
+// cannot recurse.
+extern fn {a: t@ype} init_one (A: &(@[a?][1]) >> @[a][1], elt: a): void
 
 // This function replicates the functionality of memset. It takes a possibly
 // uninitialized array of size n and mutates it into an initialized array of 
@@ -134,13 +137,35 @@ fun {a: t@ype} mem_init {n: pos} // Note I use "pos" here to avoid handling zero
     loop (A, size, elt)
 end
 
-implement {a} init_one (A, elt) = () where {
-    var B = @[a](elt)
-    val () = array_copy<a>(A, B, i2sz(1)) // A hack because I haven't figured out how to
-                                          // get this to typecheck otherwise :P but it
-                                          // optimizes out anyway. 
-                                          // Yeah, I know, this is kinda cheating.
-}
+implement {a} init_one (A, elt) = 
+    let 
+        prval (pf1, _) = array_v_uncons(view@A)
+        val p = addr@A
+        val () = ptr_set<a>(pf1 | p, elt)
+        prval () = view@(A) := array_v_cons (pf1, array_v_nil ())
+    in ()
+end
+
+
+// A better function for file reading. It lets us know that the number of 
+// bytes initialized in our buffer is dependent on the return value of fread, 
+// which may be smaller than the number of bytes requested, which in turn can
+// be smaller than the number of bytes in our buffer.
+fun file_read {m, n: nat | m <= n}{l: agz}
+    (A: &(@[char?][n]), sz: size_t m, f: !File):
+    [o: nat | o <= m]
+    (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) =
+    let
+        val+@File_Ptr (f_ptr) = f
+        val (pf1, pf2 | ret) = $extfcall([o: nat | o <= m] 
+                                  (@[char][o] @ l, 
+                                   @[char?][n - o] @ (l + o * sizeof(char)) | size_t o),
+                                  "fread", 
+                                  addr@A, 1, sz, f_ptr)
+        prval () = fold@(f)
+    in
+        (pf1, pf2 | ret)
+end
 
 implement main0 () = () where {
     // val file = file_open ("output1.txt", "w")
@@ -165,7 +190,8 @@ implement main0 () = () where {
 
     var B = @[int][5]()
 
-    val () = mem_init (B, 5, 10)
+    // If this initialization is skipped, type checking fails
+    val () = mem_init (B, 5, 10) 
 
     val sum_B = sum_up (B, 5) // equals 50
     
