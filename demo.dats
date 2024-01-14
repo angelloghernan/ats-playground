@@ -119,30 +119,16 @@ extern fn {a: t@ype} init_one (A: &(@[a?][1]) >> @[a][1], elt: a): void
 // sequence. It should optimize down to a tail-recursive function, because we 
 // only use proof-level functions after the tail-call (i.e. no actual work is 
 // done after calling 'loop')
-fun {a: t@ype} mem_init {n: pos} // Note I use "pos" here to avoid handling zero-sized arrays.
+fun {a: t@ype} mem_init {n: pos} 
     (A: &(@[a?][n]) >> @[a][n], size: int n, elt: a): void =
     let
         fun {a: t@ype} loop {n: pos} .<n>.
             (A: &(@[a?][n]) >> @[a][n], size: int n, elt: a): void =
             if size = 1 then init_one (A, elt)
             else let
-                // view@ extracts the "at-view" from an array or variable. The
-                // at-view is a proof that a variable of type T exists at the 
-                // variable's address. It is the "a @ l" proofs we have been using 
-                // thus far.
-                //
-                // This call to array_v_split splits the views, producing the
-                // types @[a?][1] @ l and @[a][n - 1] @ (l + sizeof(a)).
                 prval (pfA1, pfA2) = array_v_split{..}{..}{n}{1} (view@A)
                 val () = init_one (A, elt)
                 val pA2 = ptr_add<a> (addr@A, 1)
-                // viewptr_match takes an at-view and a pointer that correspond to
-                // the same address, and makes sure the type system knows they are
-                // related. 
-                // 
-                // We need corresponding at-view proof to dereference a pointer,
-                // both so the type system knows what type we are dereferencing,
-                // and so that the type system knows the dereference is safe.
                 val (pfA2 | pA2) = viewptr_match (pfA2 | pA2)
                 val () = loop (!pA2, size - 1, elt)
                 prval () = view@(A) := array_v_unsplit (pfA1, pfA2)
@@ -160,7 +146,7 @@ implement {a} init_one (A, elt) =
     in ()
 end
 
-extern fun file_read_raw1 {m, n: nat | m <= n}{l: agz}
+extern fun file_read_raw1 {m, n: nat | m <= n}{l: addr}
            (array_v (char?, l, n) | ptr l, size_t 1, size_t m, !File): 
            [o: nat | o <= m]
            (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) = 
@@ -170,7 +156,7 @@ extern fun file_read_raw1 {m, n: nat | m <= n}{l: agz}
 // bytes initialized in our buffer is dependent on the return value of fread, 
 // which may be smaller than the number of bytes requested, which in turn can
 // be smaller than the number of bytes in our buffer.
-fn file_read {m, n: nat | m <= n}{l: agz}
+fn file_read {m, n: nat | m <= n}{l: addr}
     (pf: array_v (char?, l, n) | p: ptr l, sz: size_t m, f: !File):
     [o: nat | o <= m]
     (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) =
@@ -180,7 +166,6 @@ fn file_read {m, n: nat | m <= n}{l: agz}
         (pf1, pf2 | ret)
 end
 
-// A better function for file writing. Safer this time! Similar to file_read.
 fn file_write {m, n: nat | m <= n}
     (A: &(@[char][n]), sz: size_t m, f: !File):
     [o: nat | o <= m] (size_t o) =
@@ -208,30 +193,44 @@ fn print_buf {n: nat} (A: &(@[char][n]), sz: size_t n): void =
     in
         loop (view@A | addr@A, sz)
 end
+
+fn print_file (file_name: string): void =
+    let
+        fun loop (A: &(@[char?][256]), file: !File): void =
+            let
+                val (pf1, pf2 | nread) = file_read (view@A | addr@A, i2sz(256), file)
+            in
+                // Cool thing about file_read is that now ATS knows the length of init-
+                // ialized bytes located at A's address is equivalent to "nread". This
+                // is something that could not ever be captured by C's type system.
+                if nread = 0 then let 
+                    prval () = view@A := array_v_unsplit{char?}{..}{..} (pf1, pf2)
+                in () end
+                else let
+                    val p = addr@A
+                    val p2 = addr@A
+
+                    val p2 = ptr_add<char>(p2, nread)
+                    val (pf2 | p2) = viewptr_match (pf2 | p2)
+
+                    val () = print_buf (!p, nread)
+
+                    prval () = view@A := array_v_unsplit{char?}{..}{..} (pf1, pf2)
+                    val () = loop (A, file)
+
+                in () end
+        end
+        val file = file_open_raw (file_name, "r")
+        var A = @[char?][256]()
+        val () = loop (A, file)
+        // If we omit this line, type-checking fails. We must always
+        // consume the linear variable "file".
+        val _ = file_close_raw (file)
+    in () end
     
 
 implement main0 () = () where {
-    val file = file_open_raw ("sample_text.txt", "r")
-
-    var A = @[char?][200]()
-
-    val (pf1, pf2 | nread) = file_read (view@A | addr@A, i2sz(200), file)
-
-    val p = addr@A
-
-    val () = print_buf (!p, nread)
-
-    val p2 = addr@A
-
-    val p2 = ptr_add<char>(p2, nread)
-
-    val (pf2 | p2) = viewptr_match (pf2 | p2)
-
-    prval () = view@A := array_v_unsplit{char?}{..}{..} (pf1, pf2)
-
-    // If we omit this line, type-checking fails. We must always
-    // consume the linear variable "file".
-    val _ = file_close_raw (file)
+    val () = print_file ("sample_text.txt")
 
     var A = @[int](1, 2, 3, 4, 5)
     
