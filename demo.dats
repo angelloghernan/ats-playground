@@ -160,29 +160,28 @@ implement {a} init_one (A, elt) =
     in ()
 end
 
+extern fun file_read_raw1 {m, n: nat | m <= n}{l: agz}
+           (array_v (char?, l, n) | ptr l, size_t 1, size_t m, !File): 
+           [o: nat | o <= m]
+           (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) = 
+           "mac#fread"
 
 // A better function for file reading. It lets us know that the number of 
 // bytes initialized in our buffer is dependent on the return value of fread, 
 // which may be smaller than the number of bytes requested, which in turn can
 // be smaller than the number of bytes in our buffer.
 fn file_read {m, n: nat | m <= n}{l: agz}
-    (A: &(@[char?][n]), sz: size_t m, f: !File):
+    (pf: array_v (char?, l, n) | p: ptr l, sz: size_t m, f: !File):
     [o: nat | o <= m]
     (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) =
     let
-        val+@File_Ptr (f_ptr) = f // This unpacks the underlying pointer from f.
-        val (pf1, pf2 | ret) = $extfcall([o: nat | o <= m] 
-                                  (@[char][o] @ l, 
-                                   @[char?][n - o] @ (l + o * sizeof(char)) | size_t o),
-                                  "fread", 
-                                  addr@A, 1, sz, f_ptr)
-        prval () = fold@(f) // This rebuilds the linear type File.
+        val (pf1, pf2 | ret) = file_read_raw1 (pf | p, i2sz(1), sz, f)
     in
         (pf1, pf2 | ret)
 end
 
 // A better function for file writing. Safer this time! Similar to file_read.
-fn file_write {m, n: nat | m <= n}{l: agz}
+fn file_write {m, n: nat | m <= n}
     (A: &(@[char][n]), sz: size_t m, f: !File):
     [o: nat | o <= m] (size_t o) =
     let
@@ -194,8 +193,45 @@ fn file_write {m, n: nat | m <= n}{l: agz}
         ret
 end
 
+fn print_buf {n: nat} (A: &(@[char][n]), sz: size_t n): void =
+    let
+        fun loop {n: nat}{l: addr} .<n>.
+        (pf: !array_v (char, l, n) | p: ptr l, sz: size_t n): void =
+            if sz = 0 then print ('\n')
+            else let
+                prval (pf1, pf2) = array_v_uncons (pf)
+                val () = print (!p)
+                val p2 = ptr_add<char>(p, 1)
+                val () = loop (pf2 | p2, sz - 1)
+                prval () = pf := array_v_cons (pf1, pf2)
+            in () end
+    in
+        loop (view@A | addr@A, sz)
+end
+    
+
 implement main0 () = () where {
-    // val file = file_open ("output1.txt", "w")
+    val file = file_open_raw ("sample_text.txt", "r")
+
+    var A = @[char?][200]()
+
+    val (pf1, pf2 | nread) = file_read (view@A | addr@A, i2sz(200), file)
+
+    val p = addr@A
+
+    // val (pf1 | p) = viewptr_match (pf1 | p)
+
+    val () = print_buf (!p, nread)
+
+    val p2 = addr@A
+
+    val p2 = ptr_add<char>(p2, nread)
+
+    val (pf2 | p2) = viewptr_match (pf2 | p2)
+
+    prval () = view@A := array_v_unsplit{char?}{..}{..} (pf1, pf2)
+
+    val _ = file_close_raw (file)
 
     // val _ = file_write ("Hello, World!", i2sz(1), i2sz(13), file)
 
