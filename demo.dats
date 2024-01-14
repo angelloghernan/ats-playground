@@ -182,7 +182,7 @@ fn print_buf {n: nat} (A: &(@[char][n]), sz: size_t n): void =
     let
         fun loop {n: nat}{l: addr} .<n>.
         (pf: !array_v (char, l, n) | p: ptr l, sz: size_t n): void =
-            if sz = 0 then print ('\n')
+            if sz = 0 then ()
             else let
                 prval (pf1, pf2) = array_v_uncons (pf)
                 val () = print (!p)
