@@ -208,9 +208,6 @@ fn print_file (file_name: string): void =
                 in () end
                 else let
                     val p = addr@A
-                    val p2 = addr@A
-
-                    val p2 = ptr_add<char>(p2, nread)
 
                     val () = print_buf (!p, nread)
 
