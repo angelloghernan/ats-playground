@@ -219,8 +219,6 @@ implement main0 () = () where {
 
     val p = addr@A
 
-    // val (pf1 | p) = viewptr_match (pf1 | p)
-
     val () = print_buf (!p, nread)
 
     val p2 = addr@A
@@ -231,17 +229,9 @@ implement main0 () = () where {
 
     prval () = view@A := array_v_unsplit{char?}{..}{..} (pf1, pf2)
 
-    val _ = file_close_raw (file)
-
-    // val _ = file_write ("Hello, World!", i2sz(1), i2sz(13), file)
-
-    // val (pf | p) = raw_malloc (i2sz(10))
-    // val (pf | res) = file_read (pf | p, i2sz(10), file)
-    // val () = raw_free (pf | p)
-
     // If we omit this line, type-checking fails. We must always
     // consume the linear variable "file".
-    // val _ = file_close (file)
+    val _ = file_close_raw (file)
 
     var A = @[int](1, 2, 3, 4, 5)
     
@@ -258,11 +248,8 @@ implement main0 () = () where {
 
     val sum_B = sum_up (B, 5) // equals 50
     
-    // This would fail type checking:
+    // This would fail type checking since it goes out of bounds
     // val sum_6 = sum_up (A, 6)
-
-    // Prints 15
-    // val () = print (sum_5)
 
     val () = println! ("sum 5: ", sum_5)
     val () = println! ("sum 10: ", sum_B)
