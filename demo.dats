@@ -212,10 +212,8 @@ fn print_file (file_name: string): void =
                 in () end
                 else let
                     val () = print_buf (!pa, nread)
-
                     prval () = pfa := array_v_unsplit{char?}{..}{..} (pf1, pf2)
                     val () = loop (pfa, fpf | pa, file)
-
                 in () end
         end
         val (fpf | fptr) = file_open (file_name, "r")
@@ -240,23 +238,24 @@ implement main0 (argc, argv) =
         val () = print_file (argv[1])
 
         var A = @[int](1, 2, 3, 4, 5)
-        
-        // Sum of all 5 numbers
-        val sum_5 = sum_up (A, 5)
 
-        // Sum of the first 4 numbers
-        val sum_4 = sum_up (A, 4)
+        fun loop {n, m: nat | m <= n} .<n - m>.
+            (A: &(@[int][n]), i: int m, sz: int n): void =
+            if i = sz then ()
+            else let
+                val sum = sum_up (A, i)
+                val () = println! ("sum ", i + 1, ": ", sum)
+            in loop (A, i + 1, sz) end
 
-        var B = @[int][5]()
+        val () = loop (A, 0, 5)
+
+        var B = @[int][10]()
 
         // If this initialization is skipped, type checking fails
-        val () = mem_init (B, 5, 10) 
+        val () = mem_init (B, 10, 10)
 
-        val sum_B = sum_up (B, 5) // equals 50
+        val () = loop (B, 0, 10) // equals 100
         
         // This would fail type checking since it goes out of bounds
         // val sum_6 = sum_up (A, 6)
-
-        val () = println! ("sum 5: ", sum_5)
-        val () = println! ("sum 10: ", sum_B)
     in () end
