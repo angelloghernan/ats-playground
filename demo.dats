@@ -146,7 +146,7 @@ implement {a} init_one (A, elt) =
     in ()
 end
 
-extern fun file_read_raw1 {m, n: nat | m <= n}{l: addr}
+extern fun file_read_raw1 {m, n: nat | m <= n}{l: agz}
            (array_v (char?, l, n) | ptr l, size_t 1, size_t m, !File): 
            [o: nat | o <= m]
            (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) = 
@@ -156,7 +156,7 @@ extern fun file_read_raw1 {m, n: nat | m <= n}{l: addr}
 // bytes initialized in our buffer is dependent on the return value of fread, 
 // which may be smaller than the number of bytes requested, which in turn can
 // be smaller than the number of bytes in our buffer.
-fn file_read {m, n: nat | m <= n}{l: addr}
+fn file_read {m, n: nat | m <= n}{l: agz}
     (pf: array_v (char?, l, n) | p: ptr l, sz: size_t m, f: !File):
     [o: nat | o <= m]
     (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) =
@@ -196,29 +196,25 @@ end
 
 fn print_file (file_name: string): void =
     let
-        fun loop (A: &(@[char?][256]), file: !File): void =
+        fun loop {l: agz} (pfa: !array_v(char?, l, 256) | 
+                           pa: ptr l, file: !File): void =
             let
-                val (pf1, pf2 | nread) = file_read (view@A | addr@A, i2sz(256), file)
+                val (pf1, pf2 | nread) = file_read (pfa | pa, i2sz(256), file)
             in
-                // Cool thing about file_read is that now ATS knows the length of init-
-                // ialized bytes located at A's address is equivalent to "nread". This
-                // is something that could not ever be captured by C's type system.
-                if nread = 0 then let 
-                    prval () = view@A := array_v_unsplit{char?}{..}{..} (pf1, pf2)
+                if nread = 0 then let
+                    prval () = pfa := array_v_unsplit{char?}{..}{..} (pf1, pf2)
                 in () end
                 else let
-                    val p = addr@A
+                    val () = print_buf (!pa, nread)
 
-                    val () = print_buf (!p, nread)
-
-                    prval () = view@A := array_v_unsplit{char?}{..}{..} (pf1, pf2)
-                    val () = loop (A, file)
+                    prval () = pfa := array_v_unsplit{char?}{..}{..} (pf1, pf2)
+                    val () = loop (pfa | pa, file)
 
                 in () end
         end
         val file = file_open_raw (file_name, "r")
         var A = @[char?][256]()
-        val () = loop (A, file)
+        val () = loop (view@A | addr@A, file)
         // If we omit this line, type-checking fails. We must always
         // consume the linear variable "file".
         val _ = file_close_raw (file)
