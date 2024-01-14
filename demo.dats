@@ -211,7 +211,6 @@ fn print_file (file_name: string): void =
                     val p2 = addr@A
 
                     val p2 = ptr_add<char>(p2, nread)
-                    val (pf2 | p2) = viewptr_match (pf2 | p2)
 
                     val () = print_buf (!p, nread)
 
