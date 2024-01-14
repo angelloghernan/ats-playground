@@ -7,34 +7,35 @@ staload UN = "prelude/SATS/unsafe.sats"
 
 // One cool thing about ATS is linear resource management.
 // You can see here that I have defined a raw file_t which is
-// a typedef for FILE* from C's stdlib.
-typedef file_t = $extype"FILE*"
-
-// Then, we have this data view type which is a linear version of this same
-// file type. This means that variables with this type must be "consumed"
-// before falling out of scope, otherwise the compiler refuses compilation. 
-// It must only be consumed once, so it is appropriate for objects that you 
-// might otherwise manage using RAII in languages like C++ or Rust.
-datavtype File = File_Ptr of (file_t)
+// a typedef for FILE from C's stdlib.
+typedef file_t = $extype"FILE"
 
 // Now let's construct some simple operations for opening, closing, 
 // reading, and writing files
 
-// fopen gives us a File. We assume for sake of simplicity that this operation
-// always works.
-extern fun file_open_raw: (string, string) -> File = "mac#fopen"
-// fclose consumes the file and returns an int
-extern fun file_close_raw: (File) -> int = "mac#fclose"
-// fwrite takes the file as a parameter but does not consume
-// it, as denoted by the exclamation mark
-extern fun file_write_raw: (string, size_t, size_t, !File) -> size_t = "mac#fwrite"
+// fopen gives us a proof and a pointer. The proof tells us that there is
+// a file_t at location l (more on that later).
+// The proof must only be consumed once, so it is appropriate for objects that 
+// you might otherwise manage using RAII in languages like C++ or Rust.
+// We assume for now that fopen always succeeds.
+extern fun file_open_raw: (string, string) -> [l: agz](file_t @ l | ptr l) = "mac#fopen"
+// fclose consumes the file proof and returns an int. The file proof MUST be consumed
+// exactly once, so the proof ensures that we always close the file.
+extern fun file_close_raw: {l: agz}(file_t @ l | ptr l) -> int = "mac#fclose"
+// fwrite takes the file proof as a parameter but does not consume
+// it, as denoted by the exclamation mark. Remember, we only want to consume
+// the proof exactly once.
+extern fun file_write_raw: {l: agz}(!(file_t @ l) | string, size_t, size_t) -> size_t = "mac#fwrite"
 
 // A dummy function that's a simple wrapper over fread. More details below.
-extern fun file_read_raw {m, n: nat | m <= n}{l: agz}
-           (b0ytes n @ l | ptr l, size_t 1, size_t m, !File): 
+extern fun file_read_raw {m, n: nat | m <= n}{l: agz}{l2: agz}
+           (b0ytes n @ l, !(file_t @ l2) | ptr l, size_t 1, size_t m, ptr l2): 
            [o: nat | o <= m]
            (b0ytes n @ l | size_t o) = 
            "mac#fread"
+
+// In the future, we can save ourselves some typing like this:
+viewdef File(l: addr) = file_t @ l
 
 // A relatively safe version of fread.
 // Let's go bit by bit:
@@ -53,17 +54,15 @@ extern fun file_read_raw {m, n: nat | m <= n}{l: agz}
 //
 // sz: size_t m => the amount of bytes to read, where sz = m
 //
-// f: !File => as before, take the file as a parameter without consuming it.
-//
 // Altogether, this ensures some nice safety properties:
 // 1. The file pointer passed to file_read must be live.
 // 2. The buffer pointer passed to file_read cannot be null.
 // 3. file_read cannot cause a buffer overflow because the buffer passed must
 //    have enough bytes to hold all the read bytes.
-fun file_read1 {m, n: nat | m <= n}{l: agz}
-    (pf: b0ytes n @ l | p: ptr l, sz: size_t m, f: !File): 
+fun file_read1 {m, n: nat | m <= n}{l: agz}{l2: agz}
+    (pf: b0ytes n @ l, fpf: !File(l2) | p: ptr l, sz: size_t m, fptr: ptr l2): 
     (b0ytes n @ l | size_t) = 
-    file_read_raw (pf | p, i2sz(1), sz, f)
+    file_read_raw (pf, fpf | p, i2sz(1), sz, fptr)
 
 // Simple wrappers over malloc and free with some basic safety properties.
 // (Note that the definition for malloc here is practical but not *exactly* safe: 
@@ -146,8 +145,8 @@ implement {a} init_one (A, elt) =
     in ()
 end
 
-extern fun file_read_raw1 {m, n: nat | m <= n}{l: agz}
-           (array_v (char?, l, n) | ptr l, size_t 1, size_t m, !File): 
+extern fun file_read_raw1 {m, n: nat | m <= n}{l: agz}{l2: agz}
+           (array_v (char?, l, n), !File(l2) | ptr l, size_t 1, size_t m, f: ptr l2): 
            [o: nat | o <= m]
            (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) = 
            "mac#fread"
@@ -156,27 +155,34 @@ extern fun file_read_raw1 {m, n: nat | m <= n}{l: agz}
 // bytes initialized in our buffer is dependent on the return value of fread, 
 // which may be smaller than the number of bytes requested, which in turn can
 // be smaller than the number of bytes in our buffer.
-fn file_read {m, n: nat | m <= n}{l: agz}
-    (pf: array_v (char?, l, n) | p: ptr l, sz: size_t m, f: !File):
+fn file_read {m, n: nat | m <= n}{l: agz}{l2: agz}
+    (pf: array_v (char?, l, n), fpf: !File(l2) | p: ptr l, sz: size_t m, f: ptr l2):
     [o: nat | o <= m]
     (@[char][o] @ l, @[char?][n - o] @ (l + o * sizeof(char)) | size_t o) =
     let
-        val (pf1, pf2 | ret) = file_read_raw1 (pf | p, i2sz(1), sz, f)
+        val (pf1, pf2 | ret) = file_read_raw1 (pf, fpf | p, i2sz(1), sz, f)
     in
         (pf1, pf2 | ret)
 end
 
-fn file_write {m, n: nat | m <= n}
-    (A: &(@[char][n]), sz: size_t m, f: !File):
+fn file_write {m, n: nat | m <= n}{l: agz}
+    (fpf: !File(l) | A: &(@[char][n]), sz: size_t m, f: ptr l):
     [o: nat | o <= m] (size_t o) =
     let
-        val+@File_Ptr (f_ptr) = f
         val ret = $extfcall([o: nat | o <= m] size_t o, 
-                            "fwrite", addr@A, 1, sz, f_ptr)
-        prval () = fold@(f)
+                            "fwrite", addr@A, 1, sz, f)
     in
         ret
 end
+
+// A safer version of file_open that doesn't assume opening a file always
+// succeeds.
+fn file_open {l: addr} (file_name: string, mode: string): 
+   [l: addr] (option_v(File(l), l > null) | ptr l) =
+       $extfcall([l: addr] (option_v(File(l), l > null) | ptr l), 
+                 "fopen", file_name, mode)
+
+    
 
 fn print_buf {n: nat} (A: &(@[char][n]), sz: size_t n): void =
     let
@@ -196,10 +202,10 @@ end
 
 fn print_file (file_name: string): void =
     let
-        fun loop {l: agz} (pfa: !array_v(char?, l, 256) | 
-                           pa: ptr l, file: !File): void =
+        fun loop {l: agz}{l2: agz} 
+            (pfa: !array_v(char?, l, 256), fpf: !File(l2) | pa: ptr l, file: ptr l2): void =
             let
-                val (pf1, pf2 | nread) = file_read (pfa | pa, i2sz(256), file)
+                val (pf1, pf2 | nread) = file_read (pfa, fpf | pa, i2sz(256), file)
             in
                 if nread = 0 then let
                     prval () = pfa := array_v_unsplit{char?}{..}{..} (pf1, pf2)
@@ -208,41 +214,49 @@ fn print_file (file_name: string): void =
                     val () = print_buf (!pa, nread)
 
                     prval () = pfa := array_v_unsplit{char?}{..}{..} (pf1, pf2)
-                    val () = loop (pfa | pa, file)
+                    val () = loop (pfa, fpf | pa, file)
 
                 in () end
         end
-        val file = file_open_raw (file_name, "r")
-        var A = @[char?][256]()
-        val () = loop (view@A | addr@A, file)
-        // If we omit this line, type-checking fails. We must always
-        // consume the linear variable "file".
-        val _ = file_close_raw (file)
+        val (fpf | fptr) = file_open (file_name, "r")
+        val () = if fptr > the_null_ptr then {
+            prval Some_v (fpf) = fpf
+            var A = @[char?][256]()
+            val () = loop (view@A, fpf | addr@A, fptr)
+            // If we omit this line, type-checking fails. We must always
+            // consume the linear variable "file".
+            val _ = file_close_raw (fpf | fptr)
+        } else {
+            prval None_v () = fpf
+        }
     in () end
-    
+ 
+fn display_help (): void =
+    println! ("usage: demo [FILE]")
 
-implement main0 () = () where {
-    val () = print_file ("sample_text.txt")
+implement main0 (argc, argv) = 
+    if argc <= 1 then display_help ()
+    else let
+        val () = print_file (argv[1])
 
-    var A = @[int](1, 2, 3, 4, 5)
-    
-    // Sum of all 5 numbers
-    val sum_5 = sum_up (A, 5)
+        var A = @[int](1, 2, 3, 4, 5)
+        
+        // Sum of all 5 numbers
+        val sum_5 = sum_up (A, 5)
 
-    // Sum of the first 4 numbers
-    val sum_4 = sum_up (A, 4)
+        // Sum of the first 4 numbers
+        val sum_4 = sum_up (A, 4)
 
-    var B = @[int][5]()
+        var B = @[int][5]()
 
-    // If this initialization is skipped, type checking fails
-    val () = mem_init (B, 5, 10) 
+        // If this initialization is skipped, type checking fails
+        val () = mem_init (B, 5, 10) 
 
-    val sum_B = sum_up (B, 5) // equals 50
-    
-    // This would fail type checking since it goes out of bounds
-    // val sum_6 = sum_up (A, 6)
+        val sum_B = sum_up (B, 5) // equals 50
+        
+        // This would fail type checking since it goes out of bounds
+        // val sum_6 = sum_up (A, 6)
 
-    val () = println! ("sum 5: ", sum_5)
-    val () = println! ("sum 10: ", sum_B)
-}
-
+        val () = println! ("sum 5: ", sum_5)
+        val () = println! ("sum 10: ", sum_B)
+    in () end
