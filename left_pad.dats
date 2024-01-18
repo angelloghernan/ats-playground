@@ -142,11 +142,8 @@ end
 fun print_str {l: addr}{n: nat} .<n>. (s: !str(l, n), size: int n): void =
     if size = 0 then ()
     else let
-        // val () = print ("Recurse str: ")
         prval str_v_cons(l, r) = s.0
-        // val i_c = $UN.cast{int}(!(s.1))
         val () = print (!(s.1))
-        // val () = print ("\n")
         val tmp = (r | ptr_succ<char>(s.1))
         val () = print_str (tmp, size - 1)
         prval () = s.0 := str_v_cons (l, tmp.0)
